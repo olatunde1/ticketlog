@@ -1,0 +1,7 @@
+project_id = "replace-with-your-project-ref"
+
+[functions.notify-new-complaint]
+verify_jwt = true
+
+[functions.manage-users]
+verify_jwt = true

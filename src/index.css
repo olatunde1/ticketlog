@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --color-brand-950: #102f50;
+  --color-brand-900: #153d65;
+  --color-brand-600: #2867d8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f5f7fb; color: #172b45; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+::selection { background: #dce9ff; }
