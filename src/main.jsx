@@ -24,6 +24,10 @@ function App() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [activationRequired, setActivationRequired] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('invite') === '1' || params.get('type') === 'invite' || new URLSearchParams(window.location.hash.slice(1)).get('type') === 'invite' || new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery'
+  })
   const [loading, setLoading] = useState(false)
   const [tickets, setTickets] = useState([])
   const [profiles, setProfiles] = useState([])
@@ -46,16 +50,39 @@ function App() {
   useEffect(() => {
     if (!isSupabaseConfigured) { setAuthLoading(false); return }
     let alive = true
-    supabase.auth.getSession().then(({ data, error }) => {
+    const searchParams = new URLSearchParams(window.location.search)
+    const hashParams = new URLSearchParams(window.location.hash.slice(1))
+    const callbackType = searchParams.get('type') || hashParams.get('type')
+    const isInviteCallback = searchParams.get('invite') === '1' || callbackType === 'invite' || callbackType === 'recovery'
+    if (isInviteCallback) setActivationRequired(true)
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' && isInviteCallback) setActivationRequired(true)
+      setSession(nextSession)
+      if (!nextSession) { setProfile(null); setTickets([]); setProfiles([]) }
+    })
+
+    // Handle Supabase PKCE callbacks and token-hash invitation links before checking the session.
+    ;(async () => {
+      let callbackError = null
+      const code = searchParams.get('code')
+      const tokenHash = searchParams.get('token_hash')
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code)
+        callbackError = error
+      } else if (tokenHash && (callbackType === 'invite' || callbackType === 'recovery')) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: callbackType })
+        callbackError = error
+      }
+      if (!alive) return
+      if (callbackError) flash(`Invitation link error: ${callbackError.message}`)
+      const { data, error } = await supabase.auth.getSession()
       if (!alive) return
       if (error) flash(error.message)
       setSession(data?.session || null)
       setAuthLoading(false)
-    })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession)
-      if (!nextSession) { setProfile(null); setTickets([]); setProfiles([]) }
-    })
+    })()
+
     return () => { alive = false; listener.subscription.unsubscribe() }
   }, [])
 
@@ -137,6 +164,13 @@ function App() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
   }
+  async function setAccountPassword(password) {
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) throw error
+    setActivationRequired(false)
+    window.history.replaceState({}, document.title, window.location.pathname)
+    flash('Your password has been set. Your account is ready.')
+  }
   async function signOut() {
     const { error } = await supabase.auth.signOut()
     if (error) flash(error.message)
@@ -201,12 +235,14 @@ function App() {
 
   if (!isSupabaseConfigured) return <SetupScreen />
   if (authLoading) return <LoadingScreen label="Checking your session…" />
+  if (activationRequired && session) return <SetPasswordScreen onSave={setAccountPassword} onSignOut={signOut} />
+  if (activationRequired && !session) return <ActivationLinkError />
   if (!session) return <LoginScreen onLogin={signIn} />
   if (loadError && !profile) return <ErrorScreen message={loadError} retry={loadWorkspace} onSignOut={signOut} />
   if (!profile || loading) return <LoadingScreen label="Loading your IT workspace…" />
 
   return <div className="min-h-screen">
-    <aside className={cx('fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-6 transition-transform lg:translate-x-0', navOpen ? 'translate-x-0' : '-translate-x-full')}>
+    <aside className={cx('fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white px-4 py-6 transition-transform lg:translate-x-0', navOpen ? 'translate-x-0' : '-translate-x-full')}>
       <div className="mb-10 flex items-center gap-3 px-2"><div className="grid size-11 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={23}/></div><div><b className="block text-sm font-extrabold">IT Support Desk</b><span className="text-[9px] font-bold tracking-[.16em] text-slate-400">INTERNAL SERVICE PORTAL</span></div><button className="ml-auto lg:hidden" onClick={() => setNavOpen(false)}><X size={19}/></button></div>
       <p className="mb-3 px-3 text-[10px] font-extrabold tracking-[.16em] text-slate-400">WORKSPACE</p>
       <SideButton icon={LayoutDashboard} active={page === 'dashboard'} onClick={() => nav('dashboard')}>Dashboard</SideButton>
@@ -214,13 +250,13 @@ function App() {
       {isAdmin && <SideButton icon={BarChart3} active={page === 'reports'} onClick={() => nav('reports')}>Analytics & reports</SideButton>}
       {isAdmin && <SideButton icon={Users} active={page === 'people'} onClick={() => nav('people')}>Staff management</SideButton>}
       <div className="mt-auto rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="mb-3 grid size-9 place-items-center rounded-lg bg-blue-100 text-blue-700"><ShieldCheck size={19}/></div><b className="text-xs">Need urgent help?</b><p className="my-2 text-[11px] leading-relaxed text-slate-500">For critical business interruptions, contact the IT team directly.</p><a className="flex items-center gap-2 text-[10px] font-bold text-blue-700" href="mailto:it-support@company.com"><Mail size={13}/>Contact IT support</a></div>
-      <div className="mt-5 border-t border-slate-100 pt-4"><div className="mb-3 flex items-center gap-3"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div></div><button title="Sign out" onClick={signOut} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"><LogOut size={15}/>Sign out</button></div>
+      <div className="mt-5 flex items-center gap-3 border-t border-slate-100 pt-4"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div><button title="Sign out" onClick={signOut} className="text-slate-400 hover:text-rose-600"><LogOut size={16}/></button></div>
     </aside>
     {navOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setNavOpen(false)}/>}
     <main className="min-h-screen lg:ml-64">
       <header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-8">
-        <div className="flex min-w-0 items-center gap-3"><button className="shrink-0 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Menu size={21}/></button><p className="min-w-0 truncate text-xs text-slate-400">Workspace <span className="mx-2">/</span><b className="text-slate-700">{page === 'dashboard' ? 'Dashboard' : page === 'requests' ? (isAdmin ? 'All tickets' : 'My requests') : page === 'people' ? 'Staff management' : 'Analytics & reports'}</b></p></div>
-        <div className="relative flex shrink-0 items-center gap-2 sm:gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" aria-label="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" aria-label="Refresh workspace" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="h-7 border-l border-slate-200"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span><button onClick={signOut} title="Sign out" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-2 text-[10px] font-semibold text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 sm:px-3"><LogOut size={15}/><span>Sign out</span></button></div>
+        <div className="flex items-center gap-3"><button className="lg:hidden" onClick={() => setNavOpen(true)}><Menu size={21}/></button><p className="text-xs text-slate-400">Workspace <span className="mx-2">/</span><b className="text-slate-700">{page === 'dashboard' ? 'Dashboard' : page === 'requests' ? (isAdmin ? 'All tickets' : 'My requests') : page === 'people' ? 'Staff management' : 'Analytics & reports'}</b></p></div>
+        <div className="relative flex items-center gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="h-7 border-l border-slate-200"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span></div>
       </header>
       <div className="mx-auto max-w-[1500px] px-4 py-7 sm:px-8">
         {loadError && <div className="mb-5 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><AlertCircle size={16}/>{loadError}<button onClick={loadWorkspace} className="ml-auto font-bold">Retry</button></div>}
@@ -239,6 +275,29 @@ function App() {
     {active && <TicketDetails ticket={active} isAdmin={isAdmin} people={profiles.filter(p => p.role === 'it_admin')} close={() => setActive(null)} save={saveTicket}/>}
     {toast && <div className="fixed bottom-5 right-5 z-[70] max-w-sm rounded-xl bg-slate-900 px-4 py-3 text-xs font-medium text-white shadow-xl">{toast}</div>}
   </div>
+}
+
+function SetPasswordScreen({ onSave, onSignOut }) {
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState(false)
+  async function submit(event) {
+    event.preventDefault()
+    setError('')
+    if (password.length < 8) { setError('Use a password with at least 8 characters.'); return }
+    if (password !== confirmPassword) { setError('The passwords do not match.'); return }
+    setBusy(true)
+    try { await onSave(password); setSuccess(true) }
+    catch (err) { setError(errorMessage(err)) }
+    finally { setBusy(false) }
+  }
+  return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-8 flex items-center gap-3"><div className="grid size-12 place-items-center rounded-2xl bg-brand-950 text-white"><ShieldCheck size={24}/></div><div><b className="block text-base">IT Support Desk</b><span className="text-[10px] tracking-widest text-slate-400">ACCOUNT ACTIVATION</span></div></div>{success ? <><h1 className="text-2xl font-extrabold text-slate-900">Account activated</h1><p className="mt-2 text-sm text-slate-600">Your password has been saved. Your IT workspace is loading.</p></> : <><p className="mb-2 text-[10px] font-extrabold tracking-[.17em] text-blue-600">WELCOME TO THE TEAM</p><h1 className="text-2xl font-extrabold text-slate-900">Activate your account</h1><p className="mt-2 mb-7 text-xs leading-relaxed text-slate-500">Create a password to finish setting up your IT Support Portal account.</p><form className="space-y-4" onSubmit={submit}><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">New password</span><input className={fieldClass} type="password" autoComplete="new-password" minLength={8} required value={password} onChange={e => setPassword(e.target.value)} placeholder="At least 8 characters"/></label><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Confirm password</span><input className={fieldClass} type="password" autoComplete="new-password" minLength={8} required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Enter the password again"/></label>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60">{busy ? 'Saving password…' : 'Activate account'}</button></form><p className="mt-5 text-center text-[10px] text-slate-400">Use at least 8 characters. Keep your password private.</p><button onClick={onSignOut} className="mt-4 w-full text-center text-[10px] font-bold text-slate-500 hover:text-blue-700">Sign out</button></>}</div></div>
+}
+
+function ActivationLinkError() {
+  return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-5 grid size-12 place-items-center rounded-2xl bg-amber-50 text-amber-600"><ShieldCheck size={24}/></div><h1 className="text-xl font-extrabold text-slate-900">Invitation link could not be verified</h1><p className="mt-3 text-sm leading-relaxed text-slate-600">The invitation may have expired, already been used, or the link did not complete its verification. Ask your IT administrator to send a new invitation. Do not register a second account.</p><a href="/" className="mt-6 inline-flex w-full justify-center rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white">Return to sign in</a></div></div>
 }
 
 function LoginScreen({ onLogin }) {

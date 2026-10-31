@@ -20,7 +20,11 @@ Deno.serve(async (req) => {
       const fullName = String(body.full_name || '').trim();
       const role = body.role === 'it_admin' ? 'it_admin' : 'staff';
       if (!email || !fullName) return json({ error: 'Full name and email are required' }, 400);
-      const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: fullName }, redirectTo: Deno.env.get('APP_URL') || undefined });
+      const appUrl = Deno.env.get('APP_URL');
+      if (!appUrl) return json({ error: 'APP_URL is not configured. Set it to your deployed portal URL in Supabase Edge Function secrets before inviting staff.' }, 500);
+      const inviteRedirect = new URL(appUrl);
+      inviteRedirect.searchParams.set('invite', '1');
+      const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: fullName }, redirectTo: inviteRedirect.toString() });
       if (error) throw error;
       // The auth trigger creates the profile. Retry briefly if the trigger has not completed yet.
       for (let attempt = 0; attempt < 5; attempt++) {
