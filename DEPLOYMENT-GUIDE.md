@@ -47,9 +47,9 @@ supabase functions deploy notify-new-complaint
 supabase functions deploy manage-users
 ```
 
-`notify-new-complaint` verifies the signed-in user owns the complaint before sending mail to every profile with role `it_admin`. `manage-users` verifies the caller is an active IT administrator before inviting users, editing their details, changing roles, or deactivating accounts. Deactivation disables sign-in while preserving the profile and support history; the last active IT administrator cannot be deactivated.
+`notify-new-complaint` verifies the signed-in user owns the complaint before sending mail to every profile with role `it_admin`. `manage-users` verifies the caller is an active IT administrator before inviting users, editing their details, changing roles, or deactivating accounts. New invitations are marked pending; the user sets a password from the invitation link, then changes to active after signing in with that password. Deactivation disables sign-in while preserving the profile and support history; the last active IT administrator cannot be deactivated.
 
-Before deploying account deactivation, rerun `supabase-notifications-and-management.sql` in the Supabase SQL Editor to add the `profiles.is_active` column. Then deploy the updated Edge Function with `supabase functions deploy manage-users`.
+Before deploying account status changes, rerun `supabase-notifications-and-management.sql` in the Supabase SQL Editor to add the `profiles.is_active` and `profiles.is_pending` columns and enable profile Realtime. Then deploy the updated Edge Function with `supabase functions deploy manage-users`.
 
 Important: the two IT administrator profiles must have valid email addresses. Resend's sender address must be verified. If the sender/domain is not verified, in-app notifications will still work but email delivery will fail.
 
@@ -99,7 +99,7 @@ After deployment, ensure `APP_URL` in Supabase Edge Function secrets matches the
 - Employee notification when their complaint changes; assigned IT officer notification on updates.
 - Analytics for complaint totals, status, priority, department and category; 7-day, 30-day and all-time filters.
 - CSV export with staff, assignment, resolution and ticket fields.
-- Staff management: invite users, edit their name/email/role, and deactivate or reactivate account sign-in. Only active IT admins can invoke the Edge Function; self-deactivation and deactivating the last active administrator are blocked.
+- Staff management: invite users, edit their name/email/role, and deactivate or reactivate account sign-in. Invited users remain pending until they set a password and sign in; administrators see the status update in real time. Only active IT admins can invoke the Edge Function; self-deactivation and deactivating the last active administrator are blocked.
 
 ## F. Production checks before inviting the whole company
 

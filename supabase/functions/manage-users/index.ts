@@ -10,11 +10,23 @@ Deno.serve(async (req) => {
     const anon = createClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: authHeader } } });
     const { data: { user }, error: authError } = await anon.auth.getUser();
     if (authError || !user) return json({ error: 'Invalid session' }, 401);
-    const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const { data: actor } = await admin.from('profiles').select('role, is_active').eq('id', user.id).single();
-    if (actor?.role !== 'it_admin' || actor.is_active === false) return json({ error: 'Only active IT administrators can manage accounts' }, 403);
-
     const body = await req.json();
+    const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const { data: actor, error: actorError } = await admin.from('profiles').select('role, is_active, is_pending').eq('id', user.id).maybeSingle();
+    if (actorError) throw actorError;
+    if (!actor) return json({ error: 'Account profile not found' }, 404);
+
+    if (body.action === 'activate_after_login') {
+      if (actor.is_active === false) return json({ error: 'Your account has been deactivated. Contact an IT administrator.' }, 403);
+      if (actor.is_pending) {
+        const { error } = await admin.from('profiles').update({ is_pending: false }).eq('id', user.id);
+        if (error) throw error;
+      }
+      return json({ success: true, message: actor.is_pending ? 'Account activated.' : 'Account is active.' });
+    }
+
+    if (actor.role !== 'it_admin' || actor.is_active === false) return json({ error: 'Only active IT administrators can manage accounts' }, 403);
+
     if (body.action === 'invite') {
       const email = String(body.email || '').trim().toLowerCase();
       const fullName = String(body.full_name || '').trim();
@@ -27,12 +39,18 @@ Deno.serve(async (req) => {
       const { data, error } = await admin.auth.admin.inviteUserByEmail(email, { data: { full_name: fullName }, redirectTo: inviteRedirect.toString() });
       if (error) throw error;
       // The auth trigger creates the profile. Retry briefly if the trigger has not completed yet.
+      let profileExists = false;
       for (let attempt = 0; attempt < 5; attempt++) {
-        const { data: profile } = await admin.from('profiles').select('id').eq('id', data.user.id).maybeSingle();
-        if (profile) break;
+        const { data: profile, error: profileError } = await admin.from('profiles').select('id').eq('id', data.user.id).maybeSingle();
+        if (profileError) throw profileError;
+        if (profile) {
+          profileExists = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
-      const { error: roleError } = await admin.from('profiles').update({ full_name: fullName, email, role }).eq('id', data.user.id);
+      if (!profileExists) throw new Error('The invitation was sent, but the user profile was not created. Check the profile creation trigger before inviting again.');
+      const { error: roleError } = await admin.from('profiles').update({ full_name: fullName, email, role, is_active: true, is_pending: true }).eq('id', data.user.id);
       if (roleError) throw roleError;
       return json({ success: true, message: `Invitation sent to ${email}` });
     }

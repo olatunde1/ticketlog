@@ -53,6 +53,8 @@ function App() {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('All statuses')
   const [toast, setToast] = useState('')
+  const [loginNotice, setLoginNotice] = useState('')
+  const [workspaceRefresh, setWorkspaceRefresh] = useState(0)
   const [navOpen, setNavOpen] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [notifications, setNotifications] = useState([])
@@ -73,7 +75,10 @@ function App() {
     if (isInviteCallback) setActivationRequired(true)
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
-      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' && isInviteCallback) setActivationRequired(true)
+      const currentSearch = new URLSearchParams(window.location.search)
+      const currentHash = new URLSearchParams(window.location.hash.slice(1))
+      const isCurrentInviteCallback = currentSearch.get('invite') === '1' || currentSearch.get('type') === 'invite' || currentHash.get('type') === 'invite' || currentHash.get('type') === 'recovery'
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN' && isCurrentInviteCallback) setActivationRequired(true)
       setSession(nextSession)
       if (!nextSession) { setProfile(null); setTickets([]); setProfiles([]) }
     })
@@ -106,7 +111,7 @@ function App() {
     if (!session?.user) return
     setLoading(true); setLoadError('')
     const { data: ownProfile, error: profileError } = await supabase
-      .from('profiles').select('id, full_name, email, role, is_active').eq('id', session.user.id).single()
+      .from('profiles').select('id, full_name, email, role, is_active, is_pending').eq('id', session.user.id).single()
     if (profileError) {
       setLoadError(`Could not load your profile: ${profileError.message}`)
       setLoading(false); return
@@ -115,6 +120,10 @@ function App() {
       await supabase.auth.signOut()
       setLoading(false)
       setLoadError('Your account has been deactivated. Contact an IT administrator if you need access restored.')
+      return
+    }
+    if (ownProfile.is_pending) {
+      setLoading(false)
       return
     }
     setProfile(ownProfile)
@@ -126,7 +135,7 @@ function App() {
     }
     let people = []
     if (ownProfile.role === 'it_admin') {
-      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, is_active').order('full_name')
+      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, is_active, is_pending').order('full_name')
       if (error) flash(`Could not load staff list: ${error.message}`)
       people = data || []
     }
@@ -148,7 +157,7 @@ function App() {
     setLoading(false)
   }, [session?.user?.id])
 
-  useEffect(() => { if (session?.user) loadWorkspace() }, [session?.user?.id, loadWorkspace])
+  useEffect(() => { if (session?.user && !activationRequired) loadWorkspace() }, [session?.user?.id, activationRequired, workspaceRefresh, loadWorkspace])
 
   useEffect(() => {
     if (!session?.user) return
@@ -169,6 +178,14 @@ function App() {
     return () => { supabase.removeChannel(channel) }
   }, [session?.user?.id])
 
+  useEffect(() => {
+    if (!session?.user || !isAdmin) return
+    const channel = supabase.channel(`profiles-${session.user.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => loadWorkspace())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [session?.user?.id, isAdmin, loadWorkspace])
+
   const ownTickets = tickets.filter(ticket => ticket.created_by === session?.user?.id)
   const visible = useMemo(() => tickets.filter(ticket =>
     (isAdmin || ticket.created_by === session?.user?.id) &&
@@ -185,13 +202,26 @@ function App() {
   async function signIn(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
+    const { data, error: activationError } = await supabase.functions.invoke('manage-users', { body: { action: 'activate_after_login' } })
+    if (activationError) {
+      await supabase.auth.signOut()
+      throw await functionInvokeError(activationError)
+    }
+    if (data?.error) {
+      await supabase.auth.signOut()
+      throw new Error(data.error)
+    }
+    setLoginNotice('')
+    setWorkspaceRefresh(value => value + 1)
   }
   async function setAccountPassword(password) {
     const { error } = await supabase.auth.updateUser({ password })
     if (error) throw error
     setActivationRequired(false)
     window.history.replaceState({}, document.title, window.location.pathname)
-    flash('Your password has been set. Your account is ready.')
+    setLoginNotice('Password saved. Sign in with your new password to activate your account.')
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) throw signOutError
   }
   async function signOut() {
     const { error } = await supabase.auth.signOut()
@@ -265,7 +295,7 @@ function App() {
   if (authLoading) return <LoadingScreen label="Checking your session…" />
   if (activationRequired && session) return <SetPasswordScreen onSave={setAccountPassword} onSignOut={signOut} />
   if (activationRequired && !session) return <ActivationLinkError />
-  if (!session) return <LoginScreen onLogin={signIn} />
+  if (!session) return <LoginScreen onLogin={signIn} notice={loginNotice} />
   if (loadError && !profile) return <ErrorScreen message={loadError} retry={loadWorkspace} onSignOut={signOut} />
   if (!profile || loading) return <LoadingScreen label="Loading your IT workspace…" />
 
@@ -328,9 +358,9 @@ function ActivationLinkError() {
   return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-5 grid size-12 place-items-center rounded-2xl bg-amber-50 text-amber-600"><ShieldCheck size={24}/></div><h1 className="text-xl font-extrabold text-slate-900">Invitation link could not be verified</h1><p className="mt-3 text-sm leading-relaxed text-slate-600">The invitation may have expired, already been used, or the link did not complete its verification. Ask your IT administrator to send a new invitation. Do not register a second account.</p><a href="/" className="mt-6 inline-flex w-full justify-center rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white">Return to sign in</a></div></div>
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, notice }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
-  return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-8 flex items-center gap-3"><div className="grid size-12 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={24}/></div><div><b className="block text-base">IT Support Desk</b><span className="text-[10px] tracking-widest text-slate-400">INTERNAL SERVICE PORTAL</span></div></div><p className="mb-2 text-[10px] font-extrabold tracking-[.17em] text-blue-600">WELCOME BACK</p><h1 className="text-2xl font-extrabold text-slate-900">Sign in to your account</h1><p className="mt-2 mb-7 text-xs leading-relaxed text-slate-500">Use the email address and password created for you by the IT team.</p><form className="space-y-4" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { await onLogin(email.trim(), password) } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } }}><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"/></label><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Password</span><input className={fieldClass} type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button></form><p className="mt-6 text-center text-[10px] text-slate-400">Access is managed by your IT administrator.</p></div></div>
+  return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-8 flex items-center gap-3"><div className="grid size-12 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={24}/></div><div><b className="block text-base">IT Support Desk</b><span className="text-[10px] tracking-widest text-slate-400">INTERNAL SERVICE PORTAL</span></div></div><p className="mb-2 text-[10px] font-extrabold tracking-[.17em] text-blue-600">WELCOME BACK</p><h1 className="text-2xl font-extrabold text-slate-900">Sign in to your account</h1><p className="mt-2 mb-7 text-xs leading-relaxed text-slate-500">Use the email address and password created for you by the IT team.</p>{notice && <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{notice}</p>}<form className="space-y-4" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { await onLogin(email.trim(), password) } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } }}><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"/></label><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Password</span><input className={fieldClass} type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button></form><p className="mt-6 text-center text-[10px] text-slate-400">Access is managed by your IT administrator.</p></div></div>
 }
 const fieldClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-50'
 function SetupScreen() { return <div className="grid min-h-screen place-items-center bg-slate-50 p-5"><div className="max-w-xl rounded-2xl border border-amber-200 bg-white p-7 shadow-sm"><div className="mb-4 flex items-center gap-2 text-amber-700"><AlertCircle/><b>Supabase setup required</b></div><h1 className="text-xl font-extrabold">Add your project credentials</h1><p className="mt-2 text-sm text-slate-600">Create a <code>.env</code> file in the project root using <code>.env.example</code> as a guide. Add your Supabase Project URL and publishable key, then restart Vite.</p><pre className="mt-4 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-white">VITE_SUPABASE_URL=https://your-project.supabase.co{'\n'}VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key</pre><p className="mt-4 text-xs text-slate-500">Do not put a service-role or secret key in this file.</p></div></div> }
@@ -373,7 +403,7 @@ function StaffManagement({ people, invite, updateUser, setUserAccess, currentUse
   const adminCount = people.filter(person => person.role === 'it_admin').length
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError(''); setSuccess('')
-    try { await invite(form); setSuccess(`Invitation sent to ${form.email}. They should use the invitation email to activate their account.`); setForm({ full_name: '', email: '', role: 'staff' }) }
+    try { await invite(form); setSuccess(`Invitation sent to ${form.email}. They should use the invitation email to activate their account.`); window.alert('Invitation sent'); setForm({ full_name: '', email: '', role: 'staff' }) }
     catch (err) { setError(errorMessage(err)) } finally { setBusy(false) }
   }
   function startEditing(person) {
@@ -390,7 +420,6 @@ function StaffManagement({ people, invite, updateUser, setUserAccess, currentUse
   }
   async function toggleUserAccess(person) {
     const isActive = person.is_active === false
-    const action = isActive ? 'reactivate' : 'deactivate'
     if (!window.confirm(`${isActive ? 'Restore' : 'Disable'} ${person.full_name || person.email}'s sign-in access? Their profile and support history will be kept.`)) return
     setUpdating(person.id); setError('')
     try { await setUserAccess(person, isActive) } catch (err) { setError(errorMessage(err)) } finally { setUpdating('') }
@@ -399,7 +428,7 @@ function StaffManagement({ people, invite, updateUser, setUserAccess, currentUse
     <div><p className="mb-1 text-[10px] font-extrabold tracking-widest text-blue-600">ACCESS CONTROL</p><h1 className="text-xl font-extrabold">Staff & IT personnel</h1><p className="mt-1 text-xs text-slate-500">Invite employees and manage portal roles. New users receive an account activation email.</p></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><StatCard label="Total accounts" value={people.length} icon={Users} color="bg-blue-50 text-blue-600"/><StatCard label="Staff" value={staffCount} icon={Users} color="bg-emerald-50 text-emerald-600"/><StatCard label="IT administrators" value={adminCount} icon={ShieldCheck} color="bg-violet-50 text-violet-600"/></div>
     <section className="rounded-xl border border-slate-200 bg-white p-5"><div className="mb-4 flex items-center gap-2"><UserPlus size={17} className="text-blue-600"/><h2 className="text-sm font-extrabold">Invite a user</h2></div><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Full name</span><input className={fieldClass} required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="Employee full name"/></label><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="employee@example.com"/></label><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Account role</span><select className={fieldClass} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="staff">Staff</option><option value="it_admin">IT administrator</option></select></label><div className="flex items-end"><button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white disabled:opacity-60">{busy ? 'Sending invitation…' : 'Send invitation'}</button></div>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700 sm:col-span-2">{error}</p>}{success && <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700 sm:col-span-2">{success}</p>}</form><p className="mt-3 text-[10px] leading-relaxed text-slate-400">Only trusted IT administrators should be assigned the administrator role. Account invitations are sent by Supabase Auth.</p></section>
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 p-5"><h2 className="text-sm font-extrabold">Registered accounts</h2><p className="mt-1 text-[10px] text-slate-400">Edit user details or disable and restore sign-in access. Existing ticket history is preserved.</p></div>{error && <p className="border-b border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 text-[9px] uppercase tracking-wider text-slate-400"><tr><th className="px-5 py-3">Employee</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{people.map(person => <tr key={person.id}><td className="px-5 py-3 text-xs font-bold text-slate-700">{person.full_name || '—'}{person.id === currentUserId && <span className="ml-2 text-[9px] text-blue-600">You</span>}</td><td className="px-5 py-3 text-[11px] text-slate-500">{person.email}</td><td className="px-5 py-3"><span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold">{person.role === 'it_admin' ? 'IT administrator' : 'Staff'}</span></td><td className="px-5 py-3"><span className={cx('rounded-md px-2 py-1 text-[9px] font-bold', person.is_active === false ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700')}>{person.is_active === false ? 'Deactivated' : 'Active'}</span></td><td className="px-5 py-3"><div className="flex items-center gap-2"><button disabled={updating === person.id} onClick={() => startEditing(person)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Pencil size={12}/>Edit</button><button disabled={person.id === currentUserId || updating === person.id} onClick={() => toggleUserAccess(person)} title={person.id === currentUserId ? 'You cannot deactivate your own account' : `${person.is_active === false ? 'Reactivate' : 'Deactivate'} sign-in access`} className={cx('rounded-md border px-2 py-1.5 text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-40', person.is_active === false ? 'border-emerald-100 text-emerald-700 hover:bg-emerald-50' : 'border-rose-100 text-rose-700 hover:bg-rose-50')}>{updating === person.id ? 'Saving…' : person.is_active === false ? 'Reactivate' : 'Deactivate'}</button></div></td></tr>)}</tbody></table></div>{!people.length && <p className="p-6 text-center text-xs text-slate-400">No accounts found.</p>}</section>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 p-5"><h2 className="text-sm font-extrabold">Registered accounts</h2><p className="mt-1 text-[10px] text-slate-400">Edit user details or disable and restore sign-in access. Existing ticket history is preserved.</p></div>{error && <p className="border-b border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 text-[9px] uppercase tracking-wider text-slate-400"><tr><th className="px-5 py-3">Employee</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{people.map(person => { const status = person.is_active === false ? 'Deactivated' : person.is_pending ? 'Pending' : 'Active'; return <tr key={person.id}><td className="px-5 py-3 text-xs font-bold text-slate-700">{person.full_name || '—'}{person.id === currentUserId && <span className="ml-2 text-[9px] text-blue-600">You</span>}</td><td className="px-5 py-3 text-[11px] text-slate-500">{person.email}</td><td className="px-5 py-3"><span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold">{person.role === 'it_admin' ? 'IT administrator' : 'Staff'}</span></td><td className="px-5 py-3"><span className={cx('rounded-md px-2 py-1 text-[9px] font-bold', status === 'Deactivated' ? 'bg-rose-50 text-rose-700' : status === 'Pending' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}>{status}</span></td><td className="px-5 py-3"><div className="flex items-center gap-2"><button disabled={updating === person.id} onClick={() => startEditing(person)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Pencil size={12}/>Edit</button><button disabled={person.id === currentUserId || updating === person.id} onClick={() => toggleUserAccess(person)} title={person.id === currentUserId ? 'You cannot deactivate your own account' : `${person.is_active === false ? 'Reactivate' : 'Deactivate'} sign-in access`} className={cx('rounded-md border px-2 py-1.5 text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-40', person.is_active === false ? 'border-emerald-100 text-emerald-700 hover:bg-emerald-50' : 'border-rose-100 text-rose-700 hover:bg-rose-50')}>{updating === person.id ? 'Saving…' : person.is_active === false ? 'Reactivate' : 'Deactivate'}</button></div></td></tr> })}</tbody></table></div>{!people.length && <p className="p-6 text-center text-xs text-slate-400">No accounts found.</p>}</section>
     {editing && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><form onSubmit={saveUser} className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl"><div><h2 className="text-base font-extrabold">Edit user</h2><p className="mt-1 text-xs text-slate-500">Update this account's name, email, and role.</p></div><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Full name</span><input className={fieldClass} required value={editForm.full_name} onChange={e => setEditForm({ ...editForm, full_name: e.target.value })}/></label><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" required value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })}/></label><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Account role</span><select className={fieldClass} disabled={editing.id === currentUserId} value={editForm.role} onChange={e => setEditForm({ ...editForm, role: e.target.value })}><option value="staff">Staff</option><option value="it_admin">IT administrator</option></select>{editing.id === currentUserId && <span className="mt-1 block text-[10px] text-slate-400">You cannot change your own administrator role.</span>}</label>{editError && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{editError}</p>}<div className="flex justify-end gap-2"><button type="button" disabled={updating === editing.id} onClick={() => setEditing(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">Cancel</button><button disabled={updating === editing.id} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-60">{updating === editing.id ? 'Saving…' : 'Save changes'}</button></div></form></div>}
   </div>
 }

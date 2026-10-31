@@ -31,14 +31,14 @@ npm run dev
 - In-app notifications for both IT administrators on new complaints
 - Server-side email alerts to both IT administrators through Resend + Supabase Edge Functions
 - Analytics by status, priority, department and category; CSV export
-- Administrator-only staff invitations, user detail editing, role management, and account access deactivation/reactivation
+- Administrator-only staff invitations, user detail editing, role management, pending/active account status, and access deactivation/reactivation
 - Responsive React + Tailwind CSS 4 interface
 
 ## Supabase setup
 1. Your existing `profiles` and `complaints` tables should already be created.
 2. `complaints` must include `device`, `department`, and `resolved_at` columns.
 3. Run `supabase-notifications-and-management.sql` in Supabase SQL Editor.
-4. Deploy the Edge Functions and configure Resend secrets using `DEPLOYMENT-GUIDE.md`.
+4. Deploy the Edge Functions and configure Resend secrets using `DEPLOYMENT-GUIDE.md`. New invitations remain pending until the invitee sets a password and signs in.
 5. Make sure `profiles.role` is `staff` or `it_admin`, and both IT admins have valid email addresses.
 
 ## Deployment

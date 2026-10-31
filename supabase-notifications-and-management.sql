@@ -2,7 +2,8 @@
 -- Run in Supabase SQL Editor after the existing profiles/complaints tables are in place.
 
 ALTER TABLE public.profiles
-  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS is_pending BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -86,7 +87,7 @@ CREATE TRIGGER complaints_notify_updates
 AFTER UPDATE ON public.complaints
 FOR EACH ROW EXECUTE FUNCTION public.notify_complaint_updates();
 
--- Enable Realtime publication for notifications and complaints.
+-- Enable Realtime publication for notifications, complaints, and account status.
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_publication_tables
@@ -99,6 +100,12 @@ DO $$ BEGIN
     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'complaints'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.complaints;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'profiles'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
   END IF;
 END $$;
 
