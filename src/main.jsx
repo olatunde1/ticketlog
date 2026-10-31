@@ -337,7 +337,7 @@ function App() {
         </>}
         {page === 'requests' && <TicketSection tickets={visible} role={isAdmin ? 'it' : 'staff'} title={isAdmin ? 'All support tickets' : 'My requests'} subtitle={isAdmin ? 'Review, assign and resolve employee complaints.' : 'Track the progress of your submitted complaints.'} onOpen={setActive} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} empty="No matching complaints found." />}
         {page === 'reports' && isAdmin && <Reports tickets={tickets}/>}
-        {page === 'people' && isAdmin && <StaffManagement people={profiles} invite={inviteUser} updateUser={updateStaffUser} setUserAccess={setStaffUserAccess} currentUserId={session.user.id}/>}
+        {page === 'people' && isAdmin && <StaffManagement people={profiles} invite={inviteUser} updateUser={updateStaffUser} setUserAccess={setStaffUserAccess} sendPasswordReset={sendPasswordReset} currentUserId={session.user.id}/>}
       </div>
     </main>
     {formOpen && <ComplaintForm close={() => setFormOpen(false)} submit={submitComplaint} profile={profile}/>}
@@ -401,7 +401,7 @@ function NotificationPanel({ items, onRead, onReadAll, busy, close }) {
   </div>
 }
 
-function StaffManagement({ people, invite, updateUser, setUserAccess, currentUserId }) {
+function StaffManagement({ people, invite, updateUser, setUserAccess, sendPasswordReset, currentUserId }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'staff' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
