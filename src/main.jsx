@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import {
   Activity, Bell, CheckCircle2, Clock3, FileText, Headphones, LayoutDashboard,
   LogOut, Menu, Plus, Search, ShieldCheck, Ticket, Wrench, X, Laptop,
-  Printer, Wifi, Monitor, Camera, Mail, ArrowUpRight, AlertCircle, RefreshCw, Users, BarChart3, UserPlus, ChevronDown
+  Printer, Wifi, Monitor, Camera, Mail, ArrowUpRight, AlertCircle, RefreshCw, Users, BarChart3, UserPlus, ChevronDown, Pencil
 } from 'lucide-react'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 import './index.css'
@@ -19,6 +19,22 @@ const dbStatus = value => ({ Open: 'open', 'In Progress': 'in_progress', Resolve
 const humanPriority = value => value ? value[0].toUpperCase() + value.slice(1) : 'Medium'
 const formatDate = value => value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'
 const errorMessage = error => error?.message || 'Something went wrong. Please try again.'
+async function functionInvokeError(error) {
+  const context = error?.context
+  if (context instanceof Response) {
+    const body = await context.clone().text()
+    if (body) {
+      try {
+        const payload = JSON.parse(body)
+        const message = payload?.error || payload?.message
+        if (message) return new Error(message)
+      } catch {
+        return new Error(body)
+      }
+    }
+  }
+  return new Error(errorMessage(error))
+}
 
 function App() {
   const [session, setSession] = useState(null)
@@ -90,10 +106,16 @@ function App() {
     if (!session?.user) return
     setLoading(true); setLoadError('')
     const { data: ownProfile, error: profileError } = await supabase
-      .from('profiles').select('id, full_name, email, role').eq('id', session.user.id).single()
+      .from('profiles').select('id, full_name, email, role, is_active').eq('id', session.user.id).single()
     if (profileError) {
       setLoadError(`Could not load your profile: ${profileError.message}`)
       setLoading(false); return
+    }
+    if (ownProfile.is_active === false) {
+      await supabase.auth.signOut()
+      setLoading(false)
+      setLoadError('Your account has been deactivated. Contact an IT administrator if you need access restored.')
+      return
     }
     setProfile(ownProfile)
     const { data: rows, error: ticketsError } = await supabase
@@ -104,7 +126,7 @@ function App() {
     }
     let people = []
     if (ownProfile.role === 'it_admin') {
-      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role').order('full_name')
+      const { data, error } = await supabase.from('profiles').select('id, full_name, email, role, is_active').order('full_name')
       if (error) flash(`Could not load staff list: ${error.message}`)
       people = data || []
     }
@@ -222,15 +244,21 @@ function App() {
   }
   async function inviteUser(form) {
     const { data, error } = await supabase.functions.invoke('manage-users', { body: { action: 'invite', ...form } })
-    if (error) throw error
+    if (error) throw await functionInvokeError(error)
     if (data?.error) throw new Error(data.error)
     await loadWorkspace(); flash(data?.message || 'Invitation sent.')
   }
-  async function changeUserRole(person, role) {
-    const { data, error } = await supabase.functions.invoke('manage-users', { body: { action: 'set_role', user_id: person.id, role } })
-    if (error) throw error
+  async function updateStaffUser(person, changes) {
+    const { data, error } = await supabase.functions.invoke('manage-users', { body: { action: 'update_user', user_id: person.id, ...changes } })
+    if (error) throw await functionInvokeError(error)
     if (data?.error) throw new Error(data.error)
-    await loadWorkspace(); flash(data?.message || 'Account role updated.')
+    await loadWorkspace(); flash(data?.message || 'User information updated.')
+  }
+  async function setStaffUserAccess(person, isActive) {
+    const { data, error } = await supabase.functions.invoke('manage-users', { body: { action: 'set_access', user_id: person.id, is_active: isActive } })
+    if (error) throw await functionInvokeError(error)
+    if (data?.error) throw new Error(data.error)
+    await loadWorkspace(); flash(data?.message || (isActive ? 'Account reactivated.' : 'Account deactivated.'))
   }
 
   if (!isSupabaseConfigured) return <SetupScreen />
@@ -242,7 +270,7 @@ function App() {
   if (!profile || loading) return <LoadingScreen label="Loading your IT workspace…" />
 
   return <div className="min-h-screen">
-    <aside className={cx('fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-slate-200 bg-white px-4 py-6 transition-transform lg:translate-x-0', navOpen ? 'translate-x-0' : '-translate-x-full')}>
+    <aside className={cx('fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-y-auto border-r border-slate-200 bg-white px-4 py-6 transition-transform lg:translate-x-0', navOpen ? 'translate-x-0' : '-translate-x-full')}>
       <div className="mb-10 flex items-center gap-3 px-2"><div className="grid size-11 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={23}/></div><div><b className="block text-sm font-extrabold">IT Support Desk</b><span className="text-[9px] font-bold tracking-[.16em] text-slate-400">INTERNAL SERVICE PORTAL</span></div><button className="ml-auto lg:hidden" onClick={() => setNavOpen(false)}><X size={19}/></button></div>
       <p className="mb-3 px-3 text-[10px] font-extrabold tracking-[.16em] text-slate-400">WORKSPACE</p>
       <SideButton icon={LayoutDashboard} active={page === 'dashboard'} onClick={() => nav('dashboard')}>Dashboard</SideButton>
@@ -250,13 +278,13 @@ function App() {
       {isAdmin && <SideButton icon={BarChart3} active={page === 'reports'} onClick={() => nav('reports')}>Analytics & reports</SideButton>}
       {isAdmin && <SideButton icon={Users} active={page === 'people'} onClick={() => nav('people')}>Staff management</SideButton>}
       <div className="mt-auto rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="mb-3 grid size-9 place-items-center rounded-lg bg-blue-100 text-blue-700"><ShieldCheck size={19}/></div><b className="text-xs">Need urgent help?</b><p className="my-2 text-[11px] leading-relaxed text-slate-500">For critical business interruptions, contact the IT team directly.</p><a className="flex items-center gap-2 text-[10px] font-bold text-blue-700" href="mailto:it-support@company.com"><Mail size={13}/>Contact IT support</a></div>
-      <div className="mt-5 flex items-center gap-3 border-t border-slate-100 pt-4"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div><button title="Sign out" onClick={signOut} className="text-slate-400 hover:text-rose-600"><LogOut size={16}/></button></div>
+      <div className="mt-5 border-t border-slate-100 pt-4"><div className="mb-3 flex items-center gap-3"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div></div><button title="Sign out" onClick={signOut} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"><LogOut size={16}/>Sign out</button></div>
     </aside>
     {navOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setNavOpen(false)}/>}
     <main className="min-h-screen lg:ml-64">
-      <header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-8">
-        <div className="flex items-center gap-3"><button className="lg:hidden" onClick={() => setNavOpen(true)}><Menu size={21}/></button><p className="text-xs text-slate-400">Workspace <span className="mx-2">/</span><b className="text-slate-700">{page === 'dashboard' ? 'Dashboard' : page === 'requests' ? (isAdmin ? 'All tickets' : 'My requests') : page === 'people' ? 'Staff management' : 'Analytics & reports'}</b></p></div>
-        <div className="relative flex items-center gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="h-7 border-l border-slate-200"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span></div>
+      <header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:px-8">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3"><button className="shrink-0 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Menu size={21}/></button><p className="min-w-0 truncate text-sm text-slate-500">Workspace <span className="mx-1 sm:mx-2">/</span><b className="text-slate-700">{page === 'dashboard' ? 'Dashboard' : page === 'requests' ? (isAdmin ? 'All tickets' : 'My requests') : page === 'people' ? 'Staff management' : 'Analytics & reports'}</b></p></div>
+        <div className="relative flex shrink-0 items-center gap-1 sm:gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" aria-label="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" aria-label="Refresh workspace" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="mx-1 h-7 border-l border-slate-200 sm:mx-0"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span><button onClick={signOut} title="Sign out" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold text-slate-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 sm:px-3 sm:text-sm"><LogOut size={16}/><span>Sign out</span></button></div>
       </header>
       <div className="mx-auto max-w-[1500px] px-4 py-7 sm:px-8">
         {loadError && <div className="mb-5 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><AlertCircle size={16}/>{loadError}<button onClick={loadWorkspace} className="ml-auto font-bold">Retry</button></div>}
@@ -268,7 +296,7 @@ function App() {
         </>}
         {page === 'requests' && <TicketSection tickets={visible} role={isAdmin ? 'it' : 'staff'} title={isAdmin ? 'All support tickets' : 'My requests'} subtitle={isAdmin ? 'Review, assign and resolve employee complaints.' : 'Track the progress of your submitted complaints.'} onOpen={setActive} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} empty="No matching complaints found." />}
         {page === 'reports' && isAdmin && <Reports tickets={tickets}/>}
-        {page === 'people' && isAdmin && <StaffManagement people={profiles} invite={inviteUser} changeRole={changeUserRole} currentUserId={session.user.id}/>}
+        {page === 'people' && isAdmin && <StaffManagement people={profiles} invite={inviteUser} updateUser={updateStaffUser} setUserAccess={setStaffUserAccess} currentUserId={session.user.id}/>}
       </div>
     </main>
     {formOpen && <ComplaintForm close={() => setFormOpen(false)} submit={submitComplaint} profile={profile}/>}
@@ -332,12 +360,15 @@ function NotificationPanel({ items, onRead, onReadAll, busy, close }) {
   </div>
 }
 
-function StaffManagement({ people, invite, changeRole, currentUserId }) {
+function StaffManagement({ people, invite, updateUser, setUserAccess, currentUserId }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'staff' })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [updating, setUpdating] = useState('')
+  const [editing, setEditing] = useState(null)
+  const [editForm, setEditForm] = useState({ full_name: '', email: '', role: 'staff' })
+  const [editError, setEditError] = useState('')
   const staffCount = people.filter(person => person.role === 'staff').length
   const adminCount = people.filter(person => person.role === 'it_admin').length
   async function submit(event) {
@@ -345,15 +376,31 @@ function StaffManagement({ people, invite, changeRole, currentUserId }) {
     try { await invite(form); setSuccess(`Invitation sent to ${form.email}. They should use the invitation email to activate their account.`); setForm({ full_name: '', email: '', role: 'staff' }) }
     catch (err) { setError(errorMessage(err)) } finally { setBusy(false) }
   }
-  async function update(person, role) {
+  function startEditing(person) {
+    setEditing(person)
+    setEditForm({ full_name: person.full_name || '', email: person.email || '', role: person.role })
+    setEditError('')
+  }
+  async function saveUser(event) {
+    event.preventDefault()
+    setUpdating(editing.id); setEditError('')
+    try { await updateUser(editing, editForm); setEditing(null) }
+    catch (err) { setEditError(errorMessage(err)) }
+    finally { setUpdating('') }
+  }
+  async function toggleUserAccess(person) {
+    const isActive = person.is_active === false
+    const action = isActive ? 'reactivate' : 'deactivate'
+    if (!window.confirm(`${isActive ? 'Restore' : 'Disable'} ${person.full_name || person.email}'s sign-in access? Their profile and support history will be kept.`)) return
     setUpdating(person.id); setError('')
-    try { await changeRole(person, role) } catch (err) { setError(errorMessage(err)) } finally { setUpdating('') }
+    try { await setUserAccess(person, isActive) } catch (err) { setError(errorMessage(err)) } finally { setUpdating('') }
   }
   return <div className="space-y-5">
     <div><p className="mb-1 text-[10px] font-extrabold tracking-widest text-blue-600">ACCESS CONTROL</p><h1 className="text-xl font-extrabold">Staff & IT personnel</h1><p className="mt-1 text-xs text-slate-500">Invite employees and manage portal roles. New users receive an account activation email.</p></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><StatCard label="Total accounts" value={people.length} icon={Users} color="bg-blue-50 text-blue-600"/><StatCard label="Staff" value={staffCount} icon={Users} color="bg-emerald-50 text-emerald-600"/><StatCard label="IT administrators" value={adminCount} icon={ShieldCheck} color="bg-violet-50 text-violet-600"/></div>
     <section className="rounded-xl border border-slate-200 bg-white p-5"><div className="mb-4 flex items-center gap-2"><UserPlus size={17} className="text-blue-600"/><h2 className="text-sm font-extrabold">Invite a user</h2></div><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Full name</span><input className={fieldClass} required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} placeholder="Employee full name"/></label><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" required value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="employee@example.com"/></label><label><span className="mb-1 block text-[10px] font-bold text-slate-600">Account role</span><select className={fieldClass} value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}><option value="staff">Staff</option><option value="it_admin">IT administrator</option></select></label><div className="flex items-end"><button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white disabled:opacity-60">{busy ? 'Sending invitation…' : 'Send invitation'}</button></div>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700 sm:col-span-2">{error}</p>}{success && <p className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700 sm:col-span-2">{success}</p>}</form><p className="mt-3 text-[10px] leading-relaxed text-slate-400">Only trusted IT administrators should be assigned the administrator role. Account invitations are sent by Supabase Auth.</p></section>
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 p-5"><h2 className="text-sm font-extrabold">Registered accounts</h2><p className="mt-1 text-[10px] text-slate-400">Change roles when an employee's access responsibilities change.</p></div><div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 text-[9px] uppercase tracking-wider text-slate-400"><tr><th className="px-5 py-3">Employee</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Access</th></tr></thead><tbody className="divide-y divide-slate-100">{people.map(person => <tr key={person.id}><td className="px-5 py-3 text-xs font-bold text-slate-700">{person.full_name || '—'}{person.id === currentUserId && <span className="ml-2 text-[9px] text-blue-600">You</span>}</td><td className="px-5 py-3 text-[11px] text-slate-500">{person.email}</td><td className="px-5 py-3"><span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold">{person.role === 'it_admin' ? 'IT administrator' : 'Staff'}</span></td><td className="px-5 py-3">{person.id === currentUserId ? <span className="text-[10px] text-slate-400">Current account</span> : <select disabled={updating === person.id} value={person.role} onChange={e => update(person, e.target.value)} className="rounded-md border border-slate-200 bg-white px-2 py-2 text-[10px] disabled:opacity-50"><option value="staff">Staff</option><option value="it_admin">IT administrator</option></select>}</td></tr>)}</tbody></table></div>{!people.length && <p className="p-6 text-center text-xs text-slate-400">No accounts found.</p>}</section>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white"><div className="border-b border-slate-100 p-5"><h2 className="text-sm font-extrabold">Registered accounts</h2><p className="mt-1 text-[10px] text-slate-400">Edit user details or disable and restore sign-in access. Existing ticket history is preserved.</p></div>{error && <p className="border-b border-rose-100 bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-slate-50 text-[9px] uppercase tracking-wider text-slate-400"><tr><th className="px-5 py-3">Employee</th><th className="px-5 py-3">Email</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{people.map(person => <tr key={person.id}><td className="px-5 py-3 text-xs font-bold text-slate-700">{person.full_name || '—'}{person.id === currentUserId && <span className="ml-2 text-[9px] text-blue-600">You</span>}</td><td className="px-5 py-3 text-[11px] text-slate-500">{person.email}</td><td className="px-5 py-3"><span className="rounded-md bg-slate-100 px-2 py-1 text-[9px] font-bold">{person.role === 'it_admin' ? 'IT administrator' : 'Staff'}</span></td><td className="px-5 py-3"><span className={cx('rounded-md px-2 py-1 text-[9px] font-bold', person.is_active === false ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700')}>{person.is_active === false ? 'Deactivated' : 'Active'}</span></td><td className="px-5 py-3"><div className="flex items-center gap-2"><button disabled={updating === person.id} onClick={() => startEditing(person)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"><Pencil size={12}/>Edit</button><button disabled={person.id === currentUserId || updating === person.id} onClick={() => toggleUserAccess(person)} title={person.id === currentUserId ? 'You cannot deactivate your own account' : `${person.is_active === false ? 'Reactivate' : 'Deactivate'} sign-in access`} className={cx('rounded-md border px-2 py-1.5 text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-40', person.is_active === false ? 'border-emerald-100 text-emerald-700 hover:bg-emerald-50' : 'border-rose-100 text-rose-700 hover:bg-rose-50')}>{updating === person.id ? 'Saving…' : person.is_active === false ? 'Reactivate' : 'Deactivate'}</button></div></td></tr>)}</tbody></table></div>{!people.length && <p className="p-6 text-center text-xs text-slate-400">No accounts found.</p>}</section>
+    {editing && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4"><form onSubmit={saveUser} className="w-full max-w-md space-y-4 rounded-xl bg-white p-6 shadow-xl"><div><h2 className="text-base font-extrabold">Edit user</h2><p className="mt-1 text-xs text-slate-500">Update this account's name, email, and role.</p></div><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Full name</span><input className={fieldClass} required value={editForm.full_name} onChange={e => setEditForm({ ...editForm, full_name: e.target.value })}/></label><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" required value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })}/></label><label className="block"><span className="mb-1 block text-[10px] font-bold text-slate-600">Account role</span><select className={fieldClass} disabled={editing.id === currentUserId} value={editForm.role} onChange={e => setEditForm({ ...editForm, role: e.target.value })}><option value="staff">Staff</option><option value="it_admin">IT administrator</option></select>{editing.id === currentUserId && <span className="mt-1 block text-[10px] text-slate-400">You cannot change your own administrator role.</span>}</label>{editError && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{editError}</p>}<div className="flex justify-end gap-2"><button type="button" disabled={updating === editing.id} onClick={() => setEditing(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600">Cancel</button><button disabled={updating === editing.id} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-60">{updating === editing.id ? 'Saving…' : 'Save changes'}</button></div></form></div>}
   </div>
 }
 

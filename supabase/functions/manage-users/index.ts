@@ -11,8 +11,8 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await anon.auth.getUser();
     if (authError || !user) return json({ error: 'Invalid session' }, 401);
     const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const { data: actor } = await admin.from('profiles').select('role').eq('id', user.id).single();
-    if (actor?.role !== 'it_admin') return json({ error: 'Only IT administrators can manage accounts' }, 403);
+    const { data: actor } = await admin.from('profiles').select('role, is_active').eq('id', user.id).single();
+    if (actor?.role !== 'it_admin' || actor.is_active === false) return json({ error: 'Only active IT administrators can manage accounts' }, 403);
 
     const body = await req.json();
     if (body.action === 'invite') {
@@ -46,6 +46,77 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return json({ success: true, message: 'Account role updated.' });
     }
+
+    if (body.action === 'update_user') {
+      const userId = String(body.user_id || '');
+      const fullName = String(body.full_name || '').trim();
+      const email = String(body.email || '').trim().toLowerCase();
+      const role = body.role;
+      if (!userId) return json({ error: 'user_id is required' }, 400);
+      if (!fullName || !email) return json({ error: 'Full name and email are required' }, 400);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: 'Enter a valid email address' }, 400);
+      if (role !== 'staff' && role !== 'it_admin') return json({ error: 'Role must be staff or it_admin' }, 400);
+      if (userId === user.id && role !== 'it_admin') return json({ error: 'You cannot remove your own administrator role.' }, 400);
+
+      const { data: target, error: targetError } = await admin.from('profiles').select('id, email, is_active').eq('id', userId).maybeSingle();
+      if (targetError) throw targetError;
+      if (!target) return json({ error: 'Account not found' }, 404);
+
+      const emailChanged = target.email?.toLowerCase() !== email;
+      if (emailChanged) {
+        const { error: authUpdateError } = await admin.auth.admin.updateUserById(userId, { email, email_confirm: true });
+        if (authUpdateError) throw authUpdateError;
+      }
+
+      const { error: profileUpdateError } = await admin.from('profiles').update({ full_name: fullName, email, role }).eq('id', userId);
+      if (profileUpdateError) {
+        if (emailChanged) throw new Error(`The authentication email was changed, but the profile update failed: ${profileUpdateError.message}`);
+        throw profileUpdateError;
+      }
+      return json({ success: true, message: 'User information updated.' });
+    }
+
+    if (body.action === 'set_access') {
+      const userId = String(body.user_id || '');
+      if (!userId) return json({ error: 'user_id is required' }, 400);
+      if (typeof body.is_active !== 'boolean') return json({ error: 'is_active must be a boolean' }, 400);
+      if (userId === user.id && !body.is_active) return json({ error: 'You cannot deactivate your own account.' }, 400);
+
+      const { data: target, error: targetError } = await admin.from('profiles').select('id, role, is_active').eq('id', userId).maybeSingle();
+      if (targetError) throw targetError;
+      if (!target) return json({ error: 'Account not found' }, 404);
+      const isActive = body.is_active === true;
+      if (target.is_active === isActive) return json({ success: true, message: isActive ? 'Account is already active.' : 'Account is already deactivated.' });
+
+      if (!isActive && target.role === 'it_admin') {
+        const { count, error: countError } = await admin.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'it_admin').eq('is_active', true);
+        if (countError) throw countError;
+        if (count !== null && count <= 1) return json({ error: 'You cannot deactivate the last active IT administrator.' }, 400);
+      }
+
+      if (isActive) {
+        const { error: profileError } = await admin.from('profiles').update({ is_active: true }).eq('id', userId);
+        if (profileError) throw profileError;
+        const { error: authError } = await admin.auth.admin.updateUserById(userId, { ban_duration: 'none' });
+        if (authError) {
+          const { error: rollbackError } = await admin.from('profiles').update({ is_active: false }).eq('id', userId);
+          if (rollbackError) throw new Error(`Could not reactivate sign-in (${authError.message}) and could not restore the disabled profile (${rollbackError.message}).`);
+          throw authError;
+        }
+        return json({ success: true, message: 'Account reactivated.' });
+      }
+
+      const { error: authError } = await admin.auth.admin.updateUserById(userId, { ban_duration: '876000h' });
+      if (authError) throw authError;
+      const { error: profileError } = await admin.from('profiles').update({ is_active: false }).eq('id', userId);
+      if (profileError) {
+        const { error: rollbackError } = await admin.auth.admin.updateUserById(userId, { ban_duration: 'none' });
+        if (rollbackError) throw new Error(`Could not mark the profile inactive (${profileError.message}) and could not restore sign-in (${rollbackError.message}).`);
+        throw profileError;
+      }
+      return json({ success: true, message: 'Account deactivated. Sign-in is disabled and existing records are preserved.' });
+    }
+
     return json({ error: 'Unsupported action' }, 400);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : 'Unexpected error' }, 500);

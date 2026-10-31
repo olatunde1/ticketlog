@@ -10,3 +10,14 @@ body { margin: 0; min-width: 320px; background: #f5f7fb; color: #172b45; }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 ::selection { background: #dce9ff; }
+
+@media (max-width: 1023px) {
+  [class~="text-[9px]"],
+  [class~="text-[10px]"],
+  [class~="text-[11px]"],
+  [class~="text-[12px]"],
+  [class~="text-[13px]"],
+  [class~="text-xs"] {
+    font-size: 14px;
+  }
+}

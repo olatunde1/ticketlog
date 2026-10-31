@@ -31,7 +31,7 @@ npm run dev
 - In-app notifications for both IT administrators on new complaints
 - Server-side email alerts to both IT administrators through Resend + Supabase Edge Functions
 - Analytics by status, priority, department and category; CSV export
-- Administrator-only staff invitations and role management
+- Administrator-only staff invitations, user detail editing, role management, and account access deactivation/reactivation
 - Responsive React + Tailwind CSS 4 interface
 
 ## Supabase setup

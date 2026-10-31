@@ -1,6 +1,9 @@
 -- IT Support Portal: notifications + realtime + safe policies
 -- Run in Supabase SQL Editor after the existing profiles/complaints tables are in place.
 
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE TABLE IF NOT EXISTS public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
