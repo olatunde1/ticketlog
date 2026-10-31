@@ -27,6 +27,23 @@ Deno.serve(async (req) => {
 
     if (actor.role !== 'it_admin' || actor.is_active === false) return json({ error: 'Only active IT administrators can manage accounts' }, 403);
 
+    if (body.action === 'reset_password') {
+      const userId = String(body.user_id || '');
+      if (!userId) return json({ error: 'user_id is required' }, 400);
+
+      const { data: target, error: targetError } = await admin.from('profiles').select('id, email, is_active').eq('id', userId).maybeSingle();
+      if (targetError) throw targetError;
+      if (!target?.email) return json({ error: 'User account or email address not found' }, 404);
+      if (target.is_active === false) return json({ error: 'Reactivate this account before sending a password reset email.' }, 400);
+
+      const appUrl = Deno.env.get('APP_URL');
+      if (!appUrl) return json({ error: 'APP_URL is not configured. Set it to your deployed portal URL in Supabase Edge Function secrets.' }, 500);
+      const authClient = createClient(url, Deno.env.get('SUPABASE_ANON_KEY')!);
+      const { error } = await authClient.auth.resetPasswordForEmail(target.email, { redirectTo: appUrl });
+      if (error) throw error;
+      return json({ success: true, message: `Password reset email sent to ${target.email}.` });
+    }
+
     if (body.action === 'invite') {
       const email = String(body.email || '').trim().toLowerCase();
       const fullName = String(body.full_name || '').trim();

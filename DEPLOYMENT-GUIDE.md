@@ -47,7 +47,7 @@ supabase functions deploy notify-new-complaint
 supabase functions deploy manage-users
 ```
 
-`notify-new-complaint` verifies the signed-in user owns the complaint before sending mail to every profile with role `it_admin`. `manage-users` verifies the caller is an active IT administrator before inviting users, editing their details, changing roles, or deactivating accounts. New invitations are marked pending; the user sets a password from the invitation link, then changes to active after signing in with that password. Deactivation disables sign-in while preserving the profile and support history; the last active IT administrator cannot be deactivated.
+`notify-new-complaint` verifies the signed-in user owns the complaint before sending mail to every profile with role `it_admin`. `manage-users` verifies the caller is an active IT administrator before inviting users, editing their details, changing roles, sending password-reset emails, or deactivating accounts. New invitations are marked pending; the user sets a password from the invitation link, then changes to active after signing in with that password. Admin password resets send the account's recovery email; the user chooses their own password using the existing recovery flow. Deactivation disables sign-in while preserving the profile and support history; the last active IT administrator cannot be deactivated.
 
 Before deploying account status changes, rerun `supabase-notifications-and-management.sql` in the Supabase SQL Editor to add the `profiles.is_active` and `profiles.is_pending` columns and enable profile Realtime. Then deploy the updated Edge Function with `supabase functions deploy manage-users`.
 
