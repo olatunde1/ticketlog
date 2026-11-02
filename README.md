@@ -25,6 +25,7 @@ npm run dev
 
 ## Features
 - Supabase email/password authentication and role-based staff / IT administrator workspaces
+- Automatic sign-out after five minutes of inactivity
 - Staff complaint submission and personal complaint history
 - IT ticket assignment, status changes, fault identification and resolution records
 - Realtime complaint refresh and notification bell with unread state

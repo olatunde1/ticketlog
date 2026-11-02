@@ -13,6 +13,7 @@ const devices = ['Desktop PC', 'Laptop', 'Printer / Scanner', 'Network / Wi-Fi',
 const departments = ['Administration', 'Finance', 'Human Resources', 'IT', 'Logistics', 'Operations', 'Sales', 'Other']
 const statuses = ['Open', 'In Progress', 'Resolved']
 const priorities = ['Low', 'Medium', 'High', 'Critical']
+const inactivityTimeoutMs = 5 * 60 * 1000
 const cx = (...values) => values.filter(Boolean).join(' ')
 const humanStatus = value => ({ open: 'Open', in_progress: 'In Progress', resolved: 'Resolved' }[value] || value)
 const dbStatus = value => ({ Open: 'open', 'In Progress': 'in_progress', Resolved: 'resolved' }[value] || 'open')
@@ -61,6 +62,7 @@ function App() {
   const [notifications, setNotifications] = useState([])
   const [notificationOpen, setNotificationOpen] = useState(false)
   const [notificationBusy, setNotificationBusy] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
 
   const isAdmin = profile?.role === 'it_admin'
   const flash = message => { setToast(message); window.setTimeout(() => setToast(''), 4000) }
@@ -107,6 +109,53 @@ function App() {
 
     return () => { alive = false; listener.subscription.unsubscribe() }
   }, [])
+
+  useEffect(() => {
+    if (!session?.user) return
+
+    let lastActivity = Date.now()
+    let timeoutId
+    const checkInactivity = () => {
+      const remaining = inactivityTimeoutMs - (Date.now() - lastActivity)
+      if (remaining <= 0) {
+        setLoginNotice('You were signed out after 5 minutes of inactivity.')
+        void signOut()
+        return
+      }
+      timeoutId = window.setTimeout(checkInactivity, remaining)
+    }
+    const recordActivity = () => {
+      const now = Date.now()
+      if (now - lastActivity < 1000) return
+      lastActivity = now
+      window.clearTimeout(timeoutId)
+      checkInactivity()
+    }
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        window.clearTimeout(timeoutId)
+        checkInactivity()
+      }
+    }
+
+    timeoutId = window.setTimeout(checkInactivity, inactivityTimeoutMs)
+    window.addEventListener('pointerdown', recordActivity)
+    window.addEventListener('keydown', recordActivity)
+    window.addEventListener('mousemove', recordActivity)
+    window.addEventListener('scroll', recordActivity, { passive: true })
+    window.addEventListener('touchstart', recordActivity, { passive: true })
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      window.removeEventListener('pointerdown', recordActivity)
+      window.removeEventListener('keydown', recordActivity)
+      window.removeEventListener('mousemove', recordActivity)
+      window.removeEventListener('scroll', recordActivity)
+      window.removeEventListener('touchstart', recordActivity)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [session?.user?.id])
 
   const loadWorkspace = useCallback(async () => {
     if (!session?.user) return
@@ -229,9 +278,26 @@ function App() {
     if (signOutError) throw signOutError
   }
   async function signOut() {
-    const { error } = await supabase.auth.signOut()
-    if (error) flash(error.message)
-    else { setProfile(null); setTickets([]); nav('dashboard') }
+    if (signingOut) return
+    setSigningOut(true)
+    setNotificationOpen(false)
+    try {
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        flash(`Could not sign out: ${error.message}`)
+        return
+      }
+      setSession(null)
+      setProfile(null)
+      setTickets([])
+      setProfiles([])
+      setNotifications([])
+      nav('dashboard')
+    } catch (error) {
+      flash(`Could not sign out: ${errorMessage(error)}`)
+    } finally {
+      setSigningOut(false)
+    }
   }
   async function submitComplaint(form) {
     const ticketNumber = `IT-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`
@@ -319,13 +385,13 @@ function App() {
       {isAdmin && <SideButton icon={BarChart3} active={page === 'reports'} onClick={() => nav('reports')}>Analytics & reports</SideButton>}
       {isAdmin && <SideButton icon={Users} active={page === 'people'} onClick={() => nav('people')}>Staff management</SideButton>}
       <div className="mt-auto rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="mb-3 grid size-9 place-items-center rounded-lg bg-blue-100 text-blue-700"><ShieldCheck size={19}/></div><b className="text-xs">Need urgent help?</b><p className="my-2 text-[11px] leading-relaxed text-slate-500">For critical business interruptions, contact the IT team directly.</p><a className="flex items-center gap-2 text-[10px] font-bold text-blue-700" href="mailto:it-support@company.com"><Mail size={13}/>Contact IT support</a></div>
-      <div className="mt-5 border-t border-slate-100 pt-4"><div className="mb-3 flex items-center gap-3"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div></div><button title="Sign out" onClick={signOut} className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700"><LogOut size={16}/>Sign out</button></div>
+      <div className="mt-5 border-t border-slate-100 pt-4"><div className="mb-3 flex items-center gap-3"><div className="grid size-9 place-items-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">{(profile.full_name || profile.email || 'U').slice(0, 2).toUpperCase()}</div><div className="min-w-0 flex-1"><b className="block truncate text-[11px]">{profile.full_name || profile.email}</b><span className="text-[10px] text-slate-400">{isAdmin ? 'IT Administrator' : 'Staff account'}</span></div></div><button type="button" title="Sign out" onClick={signOut} disabled={signingOut} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-60"><LogOut size={16}/>{signingOut ? 'Signing out…' : 'Sign out'}</button></div>
     </aside>
     {navOpen && <button aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setNavOpen(false)}/>}
     <main className="min-h-screen lg:ml-64">
       <header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:px-8">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3"><button className="shrink-0 lg:hidden" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Menu size={21}/></button><p className="min-w-0 truncate text-sm text-slate-500">Workspace <span className="mx-1 sm:mx-2">/</span><b className="text-slate-700">{page === 'dashboard' ? 'Dashboard' : page === 'requests' ? (isAdmin ? 'All tickets' : 'My requests') : page === 'people' ? 'Staff management' : 'Analytics & reports'}</b></p></div>
-        <div className="relative flex shrink-0 items-center gap-1 sm:gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" aria-label="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" aria-label="Refresh workspace" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="mx-1 h-7 border-l border-slate-200 sm:mx-0"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span><button onClick={signOut} title="Sign out" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold text-slate-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 sm:px-3 sm:text-sm"><LogOut size={16}/><span>Sign out</span></button></div>
+        <div className="relative flex shrink-0 items-center gap-1 sm:gap-3"><span className="hidden rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[9px] font-extrabold tracking-wider text-emerald-700 sm:block">● CONNECTED</span><button onClick={() => { setNotificationOpen(v => !v); }} title="Notifications" aria-label="Notifications" className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-blue-600"><Bell size={18}/>{notifications.some(n => !n.is_read) && <span className="absolute right-1 top-1 size-2 rounded-full bg-rose-500 ring-2 ring-white"/>}</button>{notificationOpen && <NotificationPanel items={notifications} onRead={markNotificationRead} onReadAll={markAllNotificationsRead} busy={notificationBusy} close={() => setNotificationOpen(false)}/>}<button onClick={() => { loadWorkspace(); flash('Refreshing your workspace…') }} title="Refresh" aria-label="Refresh workspace" className="text-slate-500 hover:text-blue-600"><RefreshCw size={17}/></button><div className="mx-1 h-7 border-l border-slate-200 sm:mx-0"/><span className="hidden max-w-48 truncate text-[11px] text-slate-500 sm:block">{profile.email}</span><button type="button" onClick={signOut} disabled={signingOut} title="Sign out" aria-label="Sign out" className="relative z-[60] inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-2 text-xs font-semibold text-slate-700 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-60 sm:px-3 sm:text-sm"><LogOut size={16}/><span>{signingOut ? 'Signing out…' : 'Sign out'}</span></button></div>
       </header>
       <div className="mx-auto max-w-[1500px] px-4 py-7 sm:px-8">
         {loadError && <div className="mb-5 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><AlertCircle size={16}/>{loadError}<button onClick={loadWorkspace} className="ml-auto font-bold">Retry</button></div>}
