@@ -437,7 +437,41 @@ function ActivationLinkError() {
 
 function LoginScreen({ onLogin, notice }) {
   const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
-  return <div className="grid min-h-screen place-items-center bg-slate-50 p-4"><div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-9"><div className="mb-8 flex items-center gap-3"><div className="grid size-12 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={24}/></div><div><b className="block text-base">IT Support Desk</b><span className="text-[10px] tracking-widest text-slate-400">INTERNAL SERVICE PORTAL</span></div></div><p className="mb-2 text-[10px] font-extrabold tracking-[.17em] text-blue-600">WELCOME BACK</p><h1 className="text-2xl font-extrabold text-slate-900">Sign in to your account</h1><p className="mt-2 mb-7 text-xs leading-relaxed text-slate-500">Use the email address and password created for you by the IT team.</p>{notice && <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{notice}</p>}<form className="space-y-4" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { await onLogin(email.trim(), password) } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } }}><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"/></label><label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Password</span><input className={fieldClass} type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>{error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}<button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button></form><p className="mt-6 text-center text-[10px] text-slate-400">Access is managed by your IT administrator.</p></div></div>
+  return <main className="min-h-screen bg-slate-50 lg:grid lg:grid-cols-[1.05fr_.95fr]">
+    <section
+      aria-label="IT support"
+      className="relative flex min-h-64 flex-col justify-end overflow-hidden bg-slate-900 bg-cover bg-center px-6 py-8 text-white sm:min-h-80 sm:px-10 lg:sticky lg:top-0 lg:h-screen lg:min-h-screen lg:px-14 lg:pb-16"
+      style={{ backgroundImage: "linear-gradient(180deg, rgba(7, 20, 38, .08) 8%, rgba(7, 20, 38, .88) 100%), url('/it-support-login.png')" }}
+    >
+      <div className="relative z-10 max-w-xl">
+        <span className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/30 px-3 py-1.5 text-[10px] font-bold tracking-wide text-white/90 backdrop-blur-sm">
+          <span className="size-2 rounded-full bg-teal-300 shadow-[0_0_12px_rgba(94,234,212,.8)]"/>Here for your team
+        </span>
+        <h2 className="max-w-lg text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl lg:text-5xl">IT help, when you need it.</h2>
+        <p className="mt-3 max-w-md text-sm leading-relaxed text-slate-200 sm:text-base">Friendly support for the tools that keep your work moving.</p>
+      </div>
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-slate-950/15 via-transparent to-slate-950/10"/>
+    </section>
+    <section className="flex min-h-[65vh] items-center justify-center px-5 py-10 sm:px-8 sm:py-14 lg:min-h-screen lg:px-12">
+      <div className="w-full max-w-md rounded-3xl border border-slate-200/80 bg-white p-7 shadow-xl shadow-slate-900/5 sm:p-9">
+        <div className="mb-8 flex items-center gap-3">
+          <div className="grid size-12 place-items-center rounded-2xl bg-brand-950 text-white"><Headphones size={24}/></div>
+          <div><b className="block text-base">IT Support Desk</b><span className="text-[10px] tracking-widest text-slate-400">INTERNAL SERVICE PORTAL</span></div>
+        </div>
+        <p className="mb-2 text-[10px] font-extrabold tracking-[.17em] text-blue-600">WELCOME BACK</p>
+        <h1 className="text-2xl font-extrabold text-slate-900">Sign in to your account</h1>
+        <p className="mt-2 mb-7 text-xs leading-relaxed text-slate-500">Use the email address and password created for you by the IT team.</p>
+        {notice && <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-700">{notice}</p>}
+        <form className="space-y-4" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { await onLogin(email.trim(), password) } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) } }}>
+          <label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Email address</span><input className={fieldClass} type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com"/></label>
+          <label className="block"><span className="mb-1.5 block text-[11px] font-bold text-slate-600">Password</span><input className={fieldClass} type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password"/></label>
+          {error && <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}
+          <button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-60">{busy ? 'Signing in…' : 'Sign in'}</button>
+        </form>
+        <p className="mt-6 text-center text-[10px] text-slate-400">Access is managed by your IT administrator.</p>
+      </div>
+    </section>
+  </main>
 }
 const fieldClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-50'
 function SetupScreen() { return <div className="grid min-h-screen place-items-center bg-slate-50 p-5"><div className="max-w-xl rounded-2xl border border-amber-200 bg-white p-7 shadow-sm"><div className="mb-4 flex items-center gap-2 text-amber-700"><AlertCircle/><b>Supabase setup required</b></div><h1 className="text-xl font-extrabold">Add your project credentials</h1><p className="mt-2 text-sm text-slate-600">Create a <code>.env</code> file in the project root using <code>.env.example</code> as a guide. Add your Supabase Project URL and publishable key, then restart Vite.</p><pre className="mt-4 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-white">VITE_SUPABASE_URL=https://your-project.supabase.co{'\n'}VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key</pre><p className="mt-4 text-xs text-slate-500">Do not put a service-role or secret key in this file.</p></div></div> }
