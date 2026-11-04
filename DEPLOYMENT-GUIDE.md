@@ -13,7 +13,7 @@ The migration creates notification records for both IT administrators when a com
 
 The migration does not remove or recreate your existing tables.
 
-For private, temporary staff-to-IT chat, run `supabase-ephemeral-chat.sql` after the notifications migration. It adds Realtime authorization policies for active staff and IT administrators. Chat messages are broadcast only and are not stored; both participants need to be online in the selected chat for live delivery. Signing out clears only that user's chat box.
+For private, temporary staff-to-IT chat and request alerts, run `supabase-ephemeral-chat.sql` after the notifications migration. It adds Realtime authorization policies for active staff and IT administrators. Chat messages and request alerts are broadcast only and are not stored; staff chat requests are delivered only to IT admins currently online, and both participants need to be online in the selected chat for live message delivery. Signing out clears only that user's chat box.
 
 ## B. Set up email delivery with Resend
 
@@ -102,7 +102,7 @@ After deployment, ensure `APP_URL` in Supabase Edge Function secrets matches the
 - Analytics for complaint totals, status, priority, department and category; 7-day, 30-day and all-time filters.
 - CSV export with staff, assignment, resolution and ticket fields.
 - Staff management: invite users, edit their name/email/role, and deactivate or reactivate account sign-in. Invited users remain pending until they set a password and sign in; administrators see the status update in real time. Only active IT admins can invoke the Edge Function; self-deactivation and deactivating the last active administrator are blocked.
-- Private staff-to-IT live chat; transient messages are cleared from the logging-out user's browser and are not persisted.
+- Private staff-to-IT live chat and chat-request badges; transient messages and requests are cleared from the logging-out user's browser and are not persisted.
 
 ## F. Production checks before inviting the whole company
 

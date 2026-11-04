@@ -45,7 +45,7 @@ npm run dev
 5. Deploy the Edge Functions and configure Resend secrets using `DEPLOYMENT-GUIDE.md`. New invitations remain pending until the invitee sets a password and signs in.
 6. Make sure `profiles.role` is `staff` or `it_admin`, and both IT admins have valid email addresses.
 
-Chat messages are transient: they are not saved to the database, and messages sent while the other participant is offline are not retained. Signing out clears that user's chat box; the other participant's open chat remains available until they close it or sign out.
+Chat messages and chat requests are transient: they are not saved to the database, and requests/messages sent while IT admins or the other participant are offline are not retained. Opening the staff chat sends a live request notification to currently online IT admins. Signing out clears that user's chat box; the other participant's open chat remains available until they close it or sign out.
 
 ## Deployment
 See `DEPLOYMENT-GUIDE.md` for Vercel and Netlify deployment instructions.

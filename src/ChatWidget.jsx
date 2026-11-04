@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { MessageCircle, Send, X } from 'lucide-react'
+import { Bell, MessageCircle, Send, X } from 'lucide-react'
 import { supabase } from './lib/supabase'
 
 const maxMessageLength = 2000
@@ -13,6 +13,13 @@ function isChatMessage(value) {
     value.text.length <= maxMessageLength
 }
 
+function isChatRequest(value) {
+  return value &&
+    typeof value.senderId === 'string' &&
+    typeof value.senderName === 'string' &&
+    typeof value.createdAt === 'string'
+}
+
 export default function ChatWidget({ profile, people }) {
   const [open, setOpen] = useState(false)
   const [selectedStaffId, setSelectedStaffId] = useState('')
@@ -21,7 +28,10 @@ export default function ChatWidget({ profile, people }) {
   const [connection, setConnection] = useState('closed')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [chatRequests, setChatRequests] = useState({})
+  const [requestError, setRequestError] = useState('')
   const channelRef = useRef(null)
+  const requestChannelRef = useRef(null)
   const bottomRef = useRef(null)
   const isAdmin = profile.role === 'it_admin'
   const currentUserId = profile.id
@@ -30,6 +40,64 @@ export default function ChatWidget({ profile, people }) {
     : []
   const conversationId = isAdmin ? selectedStaffId : currentUserId
   const selectedStaff = staff.find(person => person.id === selectedStaffId)
+
+  useEffect(() => {
+    if (!isAdmin) return
+
+    let active = true
+    const channel = supabase.channel('support-chat-requests', {
+      config: { private: true, broadcast: { self: false } }
+    })
+      .on('broadcast', { event: 'chat-request' }, ({ payload }) => {
+        const requester = people.find(person => person.id === payload?.senderId && person.role === 'staff' && person.is_active !== false && !person.is_pending)
+        if (active && requester && isChatRequest(payload)) {
+          setChatRequests(current => ({ ...current, [requester.id]: { staffId: requester.id, staffName: requester.full_name || requester.email, createdAt: payload.createdAt } }))
+        }
+      })
+      .subscribe(status => {
+        if (!active) return
+        if (status === 'SUBSCRIBED') setRequestError('')
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setRequestError('Chat request notifications could not connect.')
+      })
+
+    requestChannelRef.current = channel
+    return () => {
+      active = false
+      if (requestChannelRef.current === channel) requestChannelRef.current = null
+      void supabase.removeChannel(channel)
+    }
+  }, [isAdmin, people])
+
+  useEffect(() => {
+    if (isAdmin || !open) return
+
+    let active = true
+    const channel = supabase.channel('support-chat-requests', {
+      config: { private: true, broadcast: { self: false } }
+    }).subscribe(status => {
+      if (!active || status !== 'SUBSCRIBED') return
+      void channel.send({
+        type: 'broadcast',
+        event: 'chat-request',
+        payload: {
+          senderId: currentUserId,
+          senderName: profile.full_name || profile.email || 'Staff member',
+          createdAt: new Date().toISOString()
+        }
+      }).then(result => {
+        if (active && result !== 'ok') setRequestError('Your chat request could not be sent. Please close and reopen chat to try again.')
+      }).catch(() => {
+        if (active) setRequestError('Your chat request could not be sent. Please close and reopen chat to try again.')
+      })
+    })
+
+    requestChannelRef.current = channel
+    return () => {
+      active = false
+      if (requestChannelRef.current === channel) requestChannelRef.current = null
+      void supabase.removeChannel(channel)
+    }
+  }, [isAdmin, open, currentUserId, profile.email, profile.full_name])
 
   useEffect(() => {
     setMessages([])
@@ -113,8 +181,9 @@ export default function ChatWidget({ profile, people }) {
       aria-expanded={open}
       className="action-button fixed bottom-5 right-5 z-40 inline-flex min-h-12 items-center gap-2 rounded-full px-5 py-3 text-sm font-bold shadow-lg"
     >
-      {open ? <X size={18}/> : <MessageCircle size={18}/>}
+      {open ? <X size={18}/> : isAdmin && Object.keys(chatRequests).length ? <Bell size={18}/> : <MessageCircle size={18}/>}
       {open ? 'Close chat' : 'Chat with IT'}
+      {!open && isAdmin && Object.keys(chatRequests).length > 0 && <span className="grid size-5 place-items-center rounded-full bg-white text-[10px] font-extrabold text-[#16314f]">{Object.keys(chatRequests).length}</span>}
     </button>
 
     {open && <section aria-label="IT support chat" className="fixed bottom-20 right-4 z-50 flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
@@ -123,7 +192,15 @@ export default function ChatWidget({ profile, people }) {
           <b className="block truncate text-sm">{isAdmin ? selectedStaff ? selectedStaff.full_name || selectedStaff.email : 'IT support chats' : 'Chat with IT support'}</b>
           {isAdmin
             ? <>
-              <select aria-label="Choose a staff member" className="mt-1 max-w-full rounded border border-white/30 bg-transparent px-2 py-1 text-xs text-white" value={selectedStaffId} onChange={event => setSelectedStaffId(event.target.value)}>
+              <select aria-label="Choose a staff member" className="mt-1 max-w-full rounded border border-white/30 bg-transparent px-2 py-1 text-xs text-white" value={selectedStaffId} onChange={event => {
+                const staffId = event.target.value
+                setSelectedStaffId(staffId)
+                setChatRequests(current => {
+                  const next = { ...current }
+                  delete next[staffId]
+                  return next
+                })
+              }}>
               <option className="text-slate-900" value="">Choose a staff member</option>
               {staff.map(person => <option className="text-slate-900" key={person.id} value={person.id}>{person.full_name || person.email}</option>)}
               </select>
@@ -136,13 +213,31 @@ export default function ChatWidget({ profile, people }) {
         </button>
       </header>
 
+      {isAdmin && Object.keys(chatRequests).length > 0 && <div className="space-y-2 border-b border-amber-100 bg-amber-50 p-3">
+        <p className="flex items-center gap-2 text-[11px] font-bold text-amber-900"><Bell size={14}/>{Object.keys(chatRequests).length} new chat request{Object.keys(chatRequests).length === 1 ? '' : 's'}</p>
+        <div className="flex flex-wrap gap-2">
+          {Object.values(chatRequests).map(request => <button key={request.staffId} type="button" onClick={() => {
+            setSelectedStaffId(request.staffId)
+            setChatRequests(current => {
+              const next = { ...current }
+              delete next[request.staffId]
+              return next
+            })
+          }} className="action-button rounded-lg px-3 py-1.5 text-[10px] font-semibold">
+            Chat with {request.staffName}
+          </button>)}
+        </div>
+      </div>}
+
+      {requestError && <p role="status" className="border-b border-rose-100 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">{requestError}</p>}
+
       {isAdmin && !selectedStaffId
         ? <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
           {staff.length
-            ? <p className="text-xs text-slate-500">Choose a staff member above to open a live chat.</p>
+            ? <p className="text-xs text-slate-500">{Object.keys(chatRequests).length ? 'Select a request above or choose a staff member to start a chat.' : 'Choose a staff member above to start a live chat.'}</p>
             : <p className="text-xs text-slate-500">There are no active staff accounts to chat with.</p>}
         </div>
-        : <>
+        : <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4" aria-live="polite">
             {!messages.length && <p className="pt-6 text-center text-xs leading-relaxed text-slate-400">Start a conversation. Messages are temporary and are not saved.</p>}
             {messages.map(message => {
@@ -182,7 +277,7 @@ export default function ChatWidget({ profile, people }) {
           <p className="px-3 pb-2 text-center text-[9px] text-slate-400">
             Live chat only. Messages sent while the other person is offline are not retained.
           </p>
-        </>}
+        </div>}
     </section>}
   </>
 }

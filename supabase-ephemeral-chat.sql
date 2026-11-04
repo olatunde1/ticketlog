@@ -73,3 +73,35 @@ CREATE POLICY "Active chat participants can send support messages"
       )
     )
   );
+
+DROP POLICY IF EXISTS "Active IT admins receive chat requests" ON realtime.messages;
+CREATE POLICY "Active IT admins receive chat requests"
+  ON realtime.messages FOR SELECT TO authenticated
+  USING (
+    realtime.topic() = 'support-chat-requests'
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS admin
+      WHERE admin.id = (SELECT auth.uid())
+        AND admin.role = 'it_admin'
+        AND admin.is_active
+        AND NOT admin.is_pending
+    )
+  );
+
+DROP POLICY IF EXISTS "Active staff send chat requests" ON realtime.messages;
+CREATE POLICY "Active staff send chat requests"
+  ON realtime.messages FOR INSERT TO authenticated
+  WITH CHECK (
+    realtime.topic() = 'support-chat-requests'
+    AND realtime.messages.event = 'chat-request'
+    AND realtime.messages.payload ->> 'senderId' = (SELECT auth.uid())::text
+    AND EXISTS (
+      SELECT 1
+      FROM public.profiles AS staff
+      WHERE staff.id = (SELECT auth.uid())
+        AND staff.role = 'staff'
+        AND staff.is_active
+        AND NOT staff.is_pending
+    )
+  );
