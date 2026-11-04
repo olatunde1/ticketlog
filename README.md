@@ -31,6 +31,7 @@ npm run dev
 - IT ticket assignment, status changes, fault identification and resolution records
 - Realtime complaint refresh and notification bell with unread state
 - In-app notifications for both IT administrators on new complaints
+- Private, temporary staff-to-IT live chat using Supabase Realtime
 - Server-side email alerts to both IT administrators through Resend + Supabase Edge Functions
 - Analytics by status, priority, department and category; CSV export
 - Administrator-only staff invitations, user detail editing, role management, pending/active account status, and access deactivation/reactivation
@@ -40,8 +41,11 @@ npm run dev
 1. Your existing `profiles` and `complaints` tables should already be created.
 2. `complaints` must include `device`, `department`, and `resolved_at` columns.
 3. Run `supabase-notifications-and-management.sql` in Supabase SQL Editor.
-4. Deploy the Edge Functions and configure Resend secrets using `DEPLOYMENT-GUIDE.md`. New invitations remain pending until the invitee sets a password and signs in.
-5. Make sure `profiles.role` is `staff` or `it_admin`, and both IT admins have valid email addresses.
+4. Run `supabase-ephemeral-chat.sql` in Supabase SQL Editor to enable private chat channels for active staff and IT administrators.
+5. Deploy the Edge Functions and configure Resend secrets using `DEPLOYMENT-GUIDE.md`. New invitations remain pending until the invitee sets a password and signs in.
+6. Make sure `profiles.role` is `staff` or `it_admin`, and both IT admins have valid email addresses.
+
+Chat messages are transient: they are not saved to the database, and messages sent while the other participant is offline are not retained. Signing out clears that user's chat box; the other participant's open chat remains available until they close it or sign out.
 
 ## Deployment
 See `DEPLOYMENT-GUIDE.md` for Vercel and Netlify deployment instructions.

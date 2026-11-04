@@ -13,6 +13,8 @@ The migration creates notification records for both IT administrators when a com
 
 The migration does not remove or recreate your existing tables.
 
+For private, temporary staff-to-IT chat, run `supabase-ephemeral-chat.sql` after the notifications migration. It adds Realtime authorization policies for active staff and IT administrators. Chat messages are broadcast only and are not stored; both participants need to be online in the selected chat for live delivery. Signing out clears only that user's chat box.
+
 ## B. Set up email delivery with Resend
 
 Email is sent from a Supabase Edge Function, never directly from browser code.
@@ -100,13 +102,15 @@ After deployment, ensure `APP_URL` in Supabase Edge Function secrets matches the
 - Analytics for complaint totals, status, priority, department and category; 7-day, 30-day and all-time filters.
 - CSV export with staff, assignment, resolution and ticket fields.
 - Staff management: invite users, edit their name/email/role, and deactivate or reactivate account sign-in. Invited users remain pending until they set a password and sign in; administrators see the status update in real time. Only active IT admins can invoke the Edge Function; self-deactivation and deactivating the last active administrator are blocked.
+- Private staff-to-IT live chat; transient messages are cleared from the logging-out user's browser and are not persisted.
 
 ## F. Production checks before inviting the whole company
 
 - Verify both IT admin emails and test delivery to both inboxes (including spam/junk).
 - Test a staff invitation and activate it from the invite email.
 - Confirm staff cannot read another employee's tickets or notifications.
+- Confirm staff can only join their own private chat and active IT admins can join staff chat channels.
 - Confirm staff cannot invoke `manage-users` successfully.
-- Keep RLS enabled on `profiles`, `complaints`, and `notifications`.
+- Keep RLS enabled on `profiles`, `complaints`, `notifications`, and `realtime.messages`; do not add broad Realtime policies that expose private chat channels.
 - Use HTTPS and a company-approved sender domain.
 - Configure a backup/retention process for complaint records and periodically export reports.
