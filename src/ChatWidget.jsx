@@ -20,6 +20,14 @@ function isChatRequest(value) {
     typeof value.createdAt === 'string'
 }
 
+function mergeMessages(current, incoming) {
+  const messagesById = new Map(current.map(message => [message.id, message]))
+  incoming.forEach(message => messagesById.set(message.id, message))
+  return [...messagesById.values()].sort((first, second) =>
+    first.createdAt.localeCompare(second.createdAt)
+  )
+}
+
 export default function ChatWidget({ profile, people }) {
   const [open, setOpen] = useState(false)
   const [selectedStaffId, setSelectedStaffId] = useState('')
@@ -33,6 +41,7 @@ export default function ChatWidget({ profile, people }) {
   const channelRef = useRef(null)
   const requestChannelRef = useRef(null)
   const bottomRef = useRef(null)
+  const messageBufferRef = useRef({})
   const viewingStaffIdRef = useRef('')
   const isAdmin = profile.role === 'it_admin'
   const currentUserId = profile.id
@@ -85,6 +94,10 @@ export default function ChatWidget({ profile, people }) {
     })
       .on('broadcast', { event: 'chat-message' }, ({ payload }) => {
         if (!active || !isChatMessage(payload) || payload.senderId !== person.id) return
+        messageBufferRef.current[person.id] = mergeMessages(
+          messageBufferRef.current[person.id] || [],
+          [payload]
+        )
         if (viewingStaffIdRef.current === person.id) return
         setChatRequests(current => ({
           ...current,
@@ -117,6 +130,10 @@ export default function ChatWidget({ profile, people }) {
     })
       .on('broadcast', { event: 'chat-message' }, ({ payload }) => {
         if (!active || !isChatMessage(payload) || payload.senderId === currentUserId) return
+        messageBufferRef.current[currentUserId] = mergeMessages(
+          messageBufferRef.current[currentUserId] || [],
+          [payload]
+        )
         if (viewingStaffIdRef.current === currentUserId) return
         setChatRequests(current => ({
           ...current,
@@ -172,9 +189,18 @@ export default function ChatWidget({ profile, people }) {
   }, [isAdmin, open, currentUserId, profile.email, profile.full_name])
 
   useEffect(() => {
-    setMessages([])
+    setMessages(messageBufferRef.current[conversationId] || [])
     setError('')
   }, [conversationId])
+
+  useEffect(() => {
+    if (open && conversationId) {
+      setMessages(current => mergeMessages(
+        current,
+        messageBufferRef.current[conversationId] || []
+      ))
+    }
+  }, [open, conversationId])
 
   useEffect(() => {
     if (!open || !conversationId) {
@@ -190,7 +216,11 @@ export default function ChatWidget({ profile, people }) {
     })
       .on('broadcast', { event: 'chat-message' }, ({ payload }) => {
         if (active && isChatMessage(payload)) {
-          setMessages(current => [...current, payload])
+          messageBufferRef.current[conversationId] = mergeMessages(
+            messageBufferRef.current[conversationId] || [],
+            [payload]
+          )
+          setMessages(current => mergeMessages(current, [payload]))
         }
       })
       .subscribe(status => {
@@ -236,7 +266,11 @@ export default function ChatWidget({ profile, people }) {
     try {
       const status = await channel.send({ type: 'broadcast', event: 'chat-message', payload: message })
       if (status !== 'ok') throw new Error('Message was not delivered. Please try again.')
-      setMessages(current => [...current, message])
+      messageBufferRef.current[conversationId] = mergeMessages(
+        messageBufferRef.current[conversationId] || [],
+        [message]
+      )
+      setMessages(current => mergeMessages(current, [message]))
       setDraft('')
     } catch (sendError) {
       setError(sendError?.message || 'Message was not delivered. Please try again.')
