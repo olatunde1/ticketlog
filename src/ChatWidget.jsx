@@ -33,6 +33,7 @@ export default function ChatWidget({ profile, people }) {
   const channelRef = useRef(null)
   const requestChannelRef = useRef(null)
   const bottomRef = useRef(null)
+  const viewingStaffIdRef = useRef('')
   const isAdmin = profile.role === 'it_admin'
   const currentUserId = profile.id
   const staff = isAdmin
@@ -40,6 +41,7 @@ export default function ChatWidget({ profile, people }) {
     : []
   const conversationId = isAdmin ? selectedStaffId : currentUserId
   const selectedStaff = staff.find(person => person.id === selectedStaffId)
+  viewingStaffIdRef.current = open ? conversationId : ''
 
   useEffect(() => {
     if (!isAdmin) return
@@ -67,6 +69,71 @@ export default function ChatWidget({ profile, people }) {
       void supabase.removeChannel(channel)
     }
   }, [isAdmin, people])
+
+  useEffect(() => {
+    if (!isAdmin) return
+
+    let active = true
+    const activeStaff = people.filter(person => person.role === 'staff' && person.is_active !== false && !person.is_pending)
+    const channels = activeStaff.map(person => supabase.channel(`support-chat-${person.id}`, {
+      config: { private: true, broadcast: { self: false } }
+    })
+      .on('broadcast', { event: 'chat-message' }, ({ payload }) => {
+        if (!active || !isChatMessage(payload) || payload.senderId !== person.id) return
+        if (viewingStaffIdRef.current === person.id) return
+        setChatRequests(current => ({
+          ...current,
+          [person.id]: {
+            staffId: person.id,
+            staffName: person.full_name || person.email,
+            createdAt: payload.createdAt
+          }
+        }))
+      })
+      .subscribe(status => {
+        if (!active) return
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRequestError('Chat message notifications could not connect.')
+        }
+      }))
+
+    return () => {
+      active = false
+      channels.forEach(channel => { void supabase.removeChannel(channel) })
+    }
+  }, [isAdmin, people])
+
+  useEffect(() => {
+    if (isAdmin) return
+
+    let active = true
+    const channel = supabase.channel(`support-chat-${currentUserId}`, {
+      config: { private: true, broadcast: { self: false } }
+    })
+      .on('broadcast', { event: 'chat-message' }, ({ payload }) => {
+        if (!active || !isChatMessage(payload) || payload.senderId === currentUserId) return
+        if (viewingStaffIdRef.current === currentUserId) return
+        setChatRequests(current => ({
+          ...current,
+          [currentUserId]: {
+            staffId: currentUserId,
+            staffName: 'IT support',
+            createdAt: payload.createdAt
+          }
+        }))
+      })
+      .subscribe(status => {
+        if (!active) return
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setRequestError('Chat message notifications could not connect.')
+        }
+      })
+
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [isAdmin, currentUserId])
 
   useEffect(() => {
     if (isAdmin || !open) return
@@ -176,14 +243,23 @@ export default function ChatWidget({ profile, people }) {
   return <>
     <button
       type="button"
-      onClick={() => setOpen(value => !value)}
+      onClick={() => {
+        if (!open && !isAdmin) {
+          setChatRequests(current => {
+            const next = { ...current }
+            delete next[currentUserId]
+            return next
+          })
+        }
+        setOpen(value => !value)
+      }}
       aria-label={open ? 'Close support chat' : 'Open support chat'}
       aria-expanded={open}
       className="action-button fixed bottom-5 right-5 z-40 inline-flex min-h-12 items-center gap-2 rounded-full px-5 py-3 text-sm font-bold shadow-lg"
     >
-      {open ? <X size={18}/> : isAdmin && Object.keys(chatRequests).length ? <Bell size={18}/> : <MessageCircle size={18}/>}
+      {open ? <X size={18}/> : Object.keys(chatRequests).length ? <Bell size={18}/> : <MessageCircle size={18}/>}
       {open ? 'Close chat' : 'Chat with IT'}
-      {!open && isAdmin && Object.keys(chatRequests).length > 0 && <span className="grid size-5 place-items-center rounded-full bg-white text-[10px] font-extrabold text-[#16314f]">{Object.keys(chatRequests).length}</span>}
+      {!open && Object.keys(chatRequests).length > 0 && <span className="grid size-5 place-items-center rounded-full bg-white text-[10px] font-extrabold text-[#16314f]">{Object.keys(chatRequests).length}</span>}
     </button>
 
     {open && <section aria-label="IT support chat" className="fixed bottom-20 right-4 z-50 flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
