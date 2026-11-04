@@ -253,13 +253,15 @@ export default function ChatWidget({ profile, people }) {
         }
         setOpen(value => !value)
       }}
-      aria-label={open ? 'Close support chat' : 'Open support chat'}
+      aria-label={`${open ? 'Close support chat' : 'Open support chat'}${Object.keys(chatRequests).length ? `, ${Object.keys(chatRequests).length} unread chats` : ''}`}
+      title={open ? 'Close support chat' : 'Chat with IT'}
       aria-expanded={open}
-      className="action-button fixed bottom-5 right-5 z-40 inline-flex min-h-12 items-center gap-2 rounded-full px-5 py-3 text-sm font-bold shadow-lg"
+      className="fixed bottom-5 right-5 z-40 inline-flex size-16 items-center justify-center rounded-full bg-white shadow-lg transition-transform hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#16314f]"
     >
-      {open ? <X size={18}/> : Object.keys(chatRequests).length ? <Bell size={18}/> : <MessageCircle size={18}/>}
-      {open ? 'Close chat' : 'Chat with IT'}
-      {!open && Object.keys(chatRequests).length > 0 && <span className="grid size-5 place-items-center rounded-full bg-white text-[10px] font-extrabold text-[#16314f]">{Object.keys(chatRequests).length}</span>}
+      {open
+        ? <X size={24} className="text-[#16314f]"/>
+        : <img src="/chat-with-it.png" alt="" width="56" height="56" className="size-14 object-contain"/>}
+      {Object.keys(chatRequests).length > 0 && <span className="absolute -right-1 -top-1 grid min-h-6 min-w-6 place-items-center rounded-full bg-rose-600 px-1.5 text-xs font-extrabold text-white shadow ring-2 ring-white">{Object.keys(chatRequests).length}</span>}
     </button>
 
     {open && <section aria-label="IT support chat" className="fixed bottom-20 right-4 z-50 flex h-[min(70vh,520px)] w-[min(92vw,380px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
