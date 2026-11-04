@@ -74,7 +74,12 @@ export default function ChatWidget({ profile, people }) {
     if (!isAdmin) return
 
     let active = true
-    const activeStaff = people.filter(person => person.role === 'staff' && person.is_active !== false && !person.is_pending)
+    const activeStaff = people.filter(person =>
+      person.role === 'staff' &&
+      person.is_active !== false &&
+      !person.is_pending &&
+      !(open && selectedStaffId === person.id)
+    )
     const channels = activeStaff.map(person => supabase.channel(`support-chat-${person.id}`, {
       config: { private: true, broadcast: { self: false } }
     })
@@ -101,10 +106,10 @@ export default function ChatWidget({ profile, people }) {
       active = false
       channels.forEach(channel => { void supabase.removeChannel(channel) })
     }
-  }, [isAdmin, people])
+  }, [isAdmin, people, open, selectedStaffId])
 
   useEffect(() => {
-    if (isAdmin) return
+    if (isAdmin || open) return
 
     let active = true
     const channel = supabase.channel(`support-chat-${currentUserId}`, {
@@ -133,7 +138,7 @@ export default function ChatWidget({ profile, people }) {
       active = false
       void supabase.removeChannel(channel)
     }
-  }, [isAdmin, currentUserId])
+  }, [isAdmin, currentUserId, open])
 
   useEffect(() => {
     if (isAdmin || !open) return
